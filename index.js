@@ -6,10 +6,15 @@ const {
     Routes,
     ActivityType,
     EmbedBuilder,
+    ModalBuilder,
+    TextInputBuilder,
+    TextInputStyle,
+    ActionRowBuilder,
 } = require("discord.js");
 const express = require('express');
 const bcrypt = require("bcrypt");
 const sqlite3 = require("sqlite3").verbose();
+const path = require("path");
 
 const token = process.env.DISCORD_TOKEN;
 
@@ -58,11 +63,13 @@ client.once("ready", async () => {
             body: [
                 { name: "hello", description: "I will greet you ^^" },
                 { name: "about", description: "Sends a DM about Xenon Esports" },
+                { name: "show-rank", description: "Shows your current mmr." },
                 { name: "time", description: "Replies with the current time" },
                 { name: "help", description: "Displays a list of available commands" },
+                { name: "register", description: "Register a new account" },
+                { name: "login", description: "Login to your account" },
+                { name: "change-password", description: "Change your account password" },
                 { name: "create-scrim", description: "Schedule a scrim", options: [{ name: "when", type: 3, description: "When is the scrim?", required: true }] },
-                { name: "register", description: "Register a new account", options: [{ name: "password", type: 3, description: "Your password", required: true }] },
-                { name: "login", description: "Login to your account", options: [{ name: "password", type: 3, description: "Your password", required: true }] },
             ],
         });
 
@@ -72,118 +79,220 @@ client.once("ready", async () => {
     }
 });
 
-client.on("interactionCreate", async (interaction) => {
-    if (!interaction.isCommand()) return;
-
-    handleCommand(interaction);
-});
-
-// Initialize new database
+// Database initialization
 function initializeDatabase(serverId) {
-    const db = new sqlite3.Database(`.servers/${serverId}.db`);
-    db.serialize(() => {
-        db.run(
-            `CREATE TABLE IF NOT EXISTS users (
-                userId TEXT PRIMARY KEY,
-                hashedPassword TEXT
-            )`
-        );
+    const dbPath = path.join('.servers', `${serverId}.db`);
+    const db = new sqlite3.Database(dbPath, (err) => {
+        if (err) console.error("Error opening database:", err);
     });
+    db.run(
+        `CREATE TABLE IF NOT EXISTS users (
+            userId TEXT PRIMARY KEY,
+            hashedPassword TEXT
+        )`,
+        (err) => {
+            if (err) console.error("Error creating users table:", err);
+        }
+    );
     return db;
 }
 
+// Command handler
+client.on("interactionCreate", async (interaction) => {
+    if (interaction.isCommand()) {
+        const { commandName, guildId, user } = interaction;
+        const db = initializeDatabase(guildId);
 
-// Function to handle commands
-async function handleCommand(interaction) {
-    const { commandName, guildId, user } = interaction;
+        // Command handling
+        if (commandName === "register" || commandName === "login") {
+            const modal = new ModalBuilder()
+                .setCustomId(`${commandName}_modal`)
+                .setTitle(`Enter Password to ${commandName.charAt(0).toUpperCase() + commandName.slice(1)}`);
 
-    const db = initializeDatabase(guildId);
+            const passwordInput = new TextInputBuilder()
+                .setCustomId("password_input")
+                .setLabel("Password")
+                .setStyle(TextInputStyle.Short)
+                .setMinLength(3)
+                .setMaxLength(12)
+                .setPlaceholder("Enter your password")
+                .setRequired(true);
 
-    if (commandName === "register") {
-        const password = interaction.options.getString("password");
-        const saltRounds = 10;
-        const hashedPassword = await bcrypt.hash(password, saltRounds);
-        db.run(
-            "INSERT INTO users (userId, hashedPassword) VALUES (?, ?)",
-            [user.id, hashedPassword],
-            (err) => {
-                if (err) {
-                    if (err.code === "SQLITE_CONSTRAINT") {
-                        interaction.reply("You already have an account.");
-                    } else {
-                        console.error(err);
-                        interaction.reply("Error creating account.");
+            const actionRow = new ActionRowBuilder().addComponents(passwordInput);
+            modal.addComponents(actionRow);
+
+            await interaction.showModal(modal);
+        } else if (commandName === "change-password") {
+            const modal = new ModalBuilder()
+                .setCustomId("change_password_modal")
+                .setTitle("Change Your Password");
+        
+            const oldPasswordInput = new TextInputBuilder()
+                .setCustomId("old_password_input")
+                .setLabel("Old Password")
+                .setStyle(TextInputStyle.Short)
+                .setMinLength(3)
+                .setMaxLength(12)
+                .setRequired(true);
+        
+            const newPasswordInput = new TextInputBuilder()
+                .setCustomId("password_input")
+                .setLabel("New Password")
+                .setStyle(TextInputStyle.Short)
+                .setMinLength(3)
+                .setMaxLength(12)
+                .setRequired(true);
+        
+            const actionRowOldPassword = new ActionRowBuilder().addComponents(oldPasswordInput);
+            const actionRowNewPassword = new ActionRowBuilder().addComponents(newPasswordInput);
+            modal.addComponents(actionRowOldPassword, actionRowNewPassword);
+        
+            await interaction.showModal(modal);
+        }else if (commandName === "hello") {
+            await interaction.reply({ content: "Hi, Welcome to Xenon Esports! Use the /about command to learn more about us.", ephemeral: true });
+        } else if (commandName === "about") {
+            await interaction.user.send("Xenon Esports is an org that started to create a community that shows love and respect to each other. Check out our website for more info here: https://xenonesportsgg.com");
+            await interaction.reply({ content: "I have sent you a DM with information about Xenon Esports.", ephemeral: false });
+        } else if (commandName === "time") {
+            const currentTime = new Date();
+            const timeString = `<t:${Math.floor(currentTime.getTime() / 1000)}:F>`; // Full timestamp format
+            await interaction.reply({ content: `The current time is ${timeString}`, ephemeral: true });
+        } else if (commandName === "help") {
+            const embed = new EmbedBuilder()
+                .setTitle("Xenon Esports Bot Commands")
+                .setDescription("Here are the available commands:")
+                .addFields(
+                    { name: "/hello", value: "Replies with a greeting message." },
+                    { name: "/about", value: "Sends a DM with information about Xenon Esports." },
+                    { name: "/time", value: "Replies with the current time." },
+                    { name: "/create-scrim", value: "Schedule a scrim by providing the time." },
+                    { name: "/help", value: "Displays this help message." },
+                    { name: "/change-password", value: "Allows you to change the password for login." },
+                )
+                .setFooter({ text: "Use the commands by typing / followed by the command name." });
+
+            await interaction.reply({ embeds: [embed], ephemeral: false });
+        } else if (commandName === "create-scrim") {
+            const when = interaction.options.getString("when");
+            await interaction.reply({ content: `Scrim scheduled for ${when}`, ephemeral: false });
+        }else if (commandName === "show-rank") {
+            const apiUrl = 'https://api.tracker.gg/api/v2/rocket-league/standard/profile/epic/sparkycracked';
+            const apiKey = process.env.TRN_API_KEY;
+        
+            try {
+                const response = await fetch(apiUrl, {
+                    method: 'GET',
+                    headers: {
+                        'TRN-Api-Key': apiKey,
+                        'User-Agent': 'XenonDiscordBot/1.0',
                     }
-                } else {
-                    interaction.reply("Account registered successfully!");
+                });
+        
+                console.log(`API Response Status: ${response.status}`);
+        
+                if (!response.ok) {
+                    throw new Error(`HTTP error! Status: ${response.status}, Message: ${response.statusText}`);
                 }
+        
+                const data = await response.json();
+                console.log('API Data:', data);
+        
+                const ranked2v2Segment = data.data.segments.find(segment => segment.attributes.playlist === 'Ranked Doubles 2v2');
+        
+                if (ranked2v2Segment) {
+                    const mmr = ranked2v2Segment.attributes.mmr;
+                    await interaction.reply({ content: `Your current rank: ${mmr}`, ephemeral: false });
+                } else {
+                    await interaction.reply({ content: "Ranked Doubles 2v2 data not found.", ephemeral: true });
+                }
+            } catch (error) {
+                console.error('Error fetching data:', error);
+                await interaction.reply({ content: 'Failed to retrieve rank data. Please try again later or check the user profile.', ephemeral: true });
             }
-        );
-    } else if (commandName === "login") {
-        const password = interaction.options.getString("password");
+        }
+        
+    } else if (interaction.isModalSubmit()) {
+        const { guildId, user } = interaction;
+        const db = initializeDatabase(guildId);
+        const command = interaction.customId.split("_")[0];
+        const password = interaction.fields.getTextInputValue("password_input");
+        const newPassword = password;
+        
 
-        db.get(
-            "SELECT hashedPassword FROM users WHERE userId = ?",
-            [user.id],
-            async (err, row) => {
+        if (command === "register") {
+            try {
+                const hashedPassword = await bcrypt.hash(password, 10);
+                db.run("INSERT INTO users (userId, hashedPassword) VALUES (?, ?)", [user.id, hashedPassword], (err) => {
+                    if (err) {
+                        if (err.code === "SQLITE_CONSTRAINT") {
+                            interaction.reply({ content: "You already have an account.", ephemeral: true });
+                        } else {
+                            console.error("Database error during registration:", err);
+                            interaction.reply({ content: "Error creating account.", ephemeral: true });
+                        }
+                    } else {
+                        interaction.reply({ content: "Account registered successfully!", ephemeral: false });
+                    }
+                });
+            } catch (error) {
+                console.error("Error hashing password:", error);
+                interaction.reply({ content: "An error occurred during registration.", ephemeral: true });
+            }
+        } else if (command === "login") {
+            db.get("SELECT hashedPassword FROM users WHERE userId = ?", [user.id], async (err, row) => {
                 if (err) {
-                    console.error(err);
-                    interaction.reply("Error logging in.");
+                    console.error("Database error during login:", err);
+                    interaction.reply({ content: "Error logging in.", ephemeral: true });
                 } else if (!row) {
-                    interaction.reply("No account found. Please register first.");
+                    interaction.reply({ content: "No account found. Please register first.", ephemeral: true });
                 } else {
                     const isMatch = await bcrypt.compare(password, row.hashedPassword);
                     if (isMatch) {
-                        interaction.reply("Login successful!");
+                        interaction.reply({ content: "Login successful!", ephemeral: false });
                     } else {
-                        interaction.reply("Incorrect password.");
+                        interaction.reply({ content: "Incorrect password.", ephemeral: false });
                     }
                 }
-            }
-        );
-
-    } else if (commandName === "hello") {
-
-        await interaction.reply(
-            "Hi, Welcome to Xenon Esports! Use the /about command to learn more about us.",
-        );
-    } else if (commandName === "about") {
-        await interaction.user.send(
-            "Xenon Esports is an org that started to create a community that shows love and respect to each other. Check out our website for more info here: https://xenonesportsgg.com",
-        );
-        await interaction.reply(
-            "I have sent you a DM with information about Xenon Esports.",
-        );
-    } else if (commandName === "time") {
-        const currentTime = new Date();
-        const timeString = `<t:${Math.floor(currentTime.getTime() / 1000)}:F>`; // Full timestamp format
-        await interaction.reply(`The current time is ${timeString}`);
-    } else if (commandName === "help") {
-        const embed = new EmbedBuilder()
-            .setTitle("Xenon Esports Bot Commands")
-            .setDescription("Here are the available commands:")
-            .addFields(
-                { name: "/hello", value: "Replies with a greeting message." },
-                {
-                    name: "/about",
-                    value: "Sends a DM with information about Xenon Esports.",
-                },
-                { name: "/time", value: "Replies with the current time." },
-                {
-                    name: "/create-scrim",
-                    value: "Schedule a scrim by providing the time.",
-                },
-                { name: "/help", value: "Displays this help message." },
-            )
-            .setFooter({
-                text: "Use the commands by typing / followed by the command name.",
             });
-
-        await interaction.reply({ embeds: [embed] });
-    } else if (commandName === "create-scrim") {
-        const when = interaction.options.getString("when");
-        await interaction.reply(`Scrim scheduled for ${when}`);
+        } else if (command === "change") {
+            const oldPassword = interaction.fields.getTextInputValue("old_password_input");
+            db.get("SELECT hashedPassword FROM users WHERE userId = ?", [user.id], async (err, row) => {
+                if (err) {
+                    console.error("Database error during password change:", err);
+                    interaction.reply({ content: "Error accessing the database.", ephemeral: true });
+                    return;
+                }
+    
+                if (!row) {
+                    interaction.reply({ content: "No account found. Please register first.", ephemeral: true });
+                    return;
+                }
+    
+                // Compare old password
+                const isOldPasswordMatch = await bcrypt.compare(oldPassword, row.hashedPassword);
+                if (!isOldPasswordMatch) {
+                    interaction.reply({ content: "Old password is incorrect.", ephemeral: true });
+                    return;
+                }
+    
+                // Hash new password and update
+                try {
+                    const hashedNewPassword = await bcrypt.hash(newPassword, 10);
+                    db.run("UPDATE users SET hashedPassword = ? WHERE userId = ?", [hashedNewPassword, user.id], (err) => {
+                        if (err) {
+                            console.error("Error updating password:", err);
+                            interaction.reply({ content: "Error updating password. Please try again.", ephemeral: true });
+                        } else {
+                            interaction.reply({ content: "Password changed successfully!", ephemeral: false });
+                        }
+                    });
+                } catch (error) {
+                    console.error("Error hashing new password:", error);
+                    interaction.reply({ content: "Error processing the new password.", ephemeral: true });
+                }
+            });
+        }
     }
-}
+});
 
 client.login(token).catch(console.error);

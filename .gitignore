@@ -1,3 +1,5 @@
 node_modules
 .env
-servers
+.servers
+.vs
+*.log
