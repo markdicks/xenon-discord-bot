@@ -8,6 +8,8 @@ const {
     EmbedBuilder,
 } = require("discord.js");
 const express = require('express');
+const bcrypt = require("bcrypt");
+const sqlite3 = require("sqlite3").verbose();
 
 const token = process.env.DISCORD_TOKEN;
 
@@ -55,27 +57,12 @@ client.once("ready", async () => {
         await rest.put(Routes.applicationCommands(client.user.id), {
             body: [
                 { name: "hello", description: "I will greet you ^^" },
-                {
-                    name: "about",
-                    description: "Sends a DM about Xenon Esports",
-                },
+                { name: "about", description: "Sends a DM about Xenon Esports" },
                 { name: "time", description: "Replies with the current time" },
-                {
-                    name: "help",
-                    description: "Displays a list of available commands",
-                },
-                {
-                    name: "create-scrim",
-                    description: "Schedule a scrim",
-                    options: [
-                        {
-                            name: "when",
-                            type: 3,
-                            description: "When is the scrim?",
-                            required: true,
-                        },
-                    ],
-                },
+                { name: "help", description: "Displays a list of available commands" },
+                { name: "create-scrim", description: "Schedule a scrim", options: [{ name: "when", type: 3, description: "When is the scrim?", required: true }] },
+                { name: "register", description: "Register a new account", options: [{ name: "password", type: 3, description: "Your password", required: true }] },
+                { name: "login", description: "Login to your account", options: [{ name: "password", type: 3, description: "Your password", required: true }] },
             ],
         });
 
@@ -91,11 +78,72 @@ client.on("interactionCreate", async (interaction) => {
     handleCommand(interaction);
 });
 
+// Initialize new database
+function initializeDatabase(serverId) {
+    const db = new sqlite3.Database(`.servers/${serverId}.db`);
+    db.serialize(() => {
+        db.run(
+            `CREATE TABLE IF NOT EXISTS users (
+                userId TEXT PRIMARY KEY,
+                hashedPassword TEXT
+            )`
+        );
+    });
+    return db;
+}
+
+
 // Function to handle commands
 async function handleCommand(interaction) {
-    const { commandName } = interaction;
+    const { commandName, guildId, user } = interaction;
 
-    if (commandName === "hello") {
+    const db = initializeDatabase(guildId);
+
+    if (commandName === "register") {
+        const password = interaction.options.getString("password");
+        const saltRounds = 10;
+        const hashedPassword = await bcrypt.hash(password, saltRounds);
+        db.run(
+            "INSERT INTO users (userId, hashedPassword) VALUES (?, ?)",
+            [user.id, hashedPassword],
+            (err) => {
+                if (err) {
+                    if (err.code === "SQLITE_CONSTRAINT") {
+                        interaction.reply("You already have an account.");
+                    } else {
+                        console.error(err);
+                        interaction.reply("Error creating account.");
+                    }
+                } else {
+                    interaction.reply("Account registered successfully!");
+                }
+            }
+        );
+    } else if (commandName === "login") {
+        const password = interaction.options.getString("password");
+
+        db.get(
+            "SELECT hashedPassword FROM users WHERE userId = ?",
+            [user.id],
+            async (err, row) => {
+                if (err) {
+                    console.error(err);
+                    interaction.reply("Error logging in.");
+                } else if (!row) {
+                    interaction.reply("No account found. Please register first.");
+                } else {
+                    const isMatch = await bcrypt.compare(password, row.hashedPassword);
+                    if (isMatch) {
+                        interaction.reply("Login successful!");
+                    } else {
+                        interaction.reply("Incorrect password.");
+                    }
+                }
+            }
+        );
+
+    } else if (commandName === "hello") {
+
         await interaction.reply(
             "Hi, Welcome to Xenon Esports! Use the /about command to learn more about us.",
         );
